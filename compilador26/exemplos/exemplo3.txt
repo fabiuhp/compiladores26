@@ -1,0 +1,9 @@
+// Exemplo 3: Programa com erros lexicos
+
+int main() {
+    int 1x;
+    float valor@;
+    1x = 12.;
+    /* comentario nao fechado
+    print(1x);
+}

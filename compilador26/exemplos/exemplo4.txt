@@ -1,0 +1,9 @@
+// Exemplo 4: Programa sem erros lexicos, mas com erro sintatico
+// Falta o ponto e virgula apos a atribuicao
+
+int main() {
+    int x;
+    x = 10
+    print(x);
+    return 0;
+}
