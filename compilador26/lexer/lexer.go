@@ -7,139 +7,193 @@ import (
 	"strings"
 )
 
-type LexError struct {
-	Message string
+const maxIdentifierLength = 30
+
+type LexicalError struct {
 	Line    int
+	Message string
 }
 
-func (e LexError) String() string {
+func (e LexicalError) String() string {
 	return fmt.Sprintf("[Linha %d] %s", e.Line, e.Message)
 }
 
+type matchAction int
+
 const (
-	skip         = -1
-	blockComment = -2
-	errNumber    = -3
-	errChar      = -4
+	emitToken matchAction = iota
+	skipMatch
+	enterBlockComment
+	reportMalformedNumber
+	reportInvalidCharacter
 )
 
-type lexRule struct {
+type lexicalRule struct {
 	pattern *regexp.Regexp
+	action  matchAction
 	code    int
 }
 
-var rules = []lexRule{
-	{regexp.MustCompile(`^[ \t\r\n]+`), skip},
-	{regexp.MustCompile(`^//[^\n]*`), skip},
-	{regexp.MustCompile(`^/\*`), blockComment},
+func emit(pattern string, code int) lexicalRule {
+	return lexicalRule{regexp.MustCompile(pattern), emitToken, code}
+}
 
-	{regexp.MustCompile(`^[0-9]+\.[0-9]+[A-Za-z_][A-Za-z0-9_]*`), errNumber},
-	{regexp.MustCompile(`^[0-9]+\.[0-9]+`), token.NUM},
-	{regexp.MustCompile(`^[0-9]+\.[A-Za-z_][A-Za-z0-9_]*`), errNumber},
-	{regexp.MustCompile(`^[0-9]+\.`), errNumber},
-	{regexp.MustCompile(`^[0-9]+[A-Za-z_][A-Za-z0-9_]*`), errNumber},
-	{regexp.MustCompile(`^[0-9]+`), token.NUM},
+func skip(pattern string) lexicalRule {
+	return lexicalRule{regexp.MustCompile(pattern), skipMatch, 0}
+}
 
-	{regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*`), token.ID},
+func startBlockComment(pattern string) lexicalRule {
+	return lexicalRule{regexp.MustCompile(pattern), enterBlockComment, 0}
+}
 
-	{regexp.MustCompile(`^==`), token.EQ},
-	{regexp.MustCompile(`^!=`), token.NEQ},
-	{regexp.MustCompile(`^<=`), token.LTE},
-	{regexp.MustCompile(`^>=`), token.GTE},
+func malformedNumber(pattern string) lexicalRule {
+	return lexicalRule{regexp.MustCompile(pattern), reportMalformedNumber, 0}
+}
 
-	{regexp.MustCompile(`^=`), token.ASSIGN},
-	{regexp.MustCompile(`^\+`), token.PLUS},
-	{regexp.MustCompile(`^-`), token.MINUS},
-	{regexp.MustCompile(`^\*`), token.MULT},
-	{regexp.MustCompile(`^/`), token.DIV},
-	{regexp.MustCompile(`^<`), token.LT},
-	{regexp.MustCompile(`^>`), token.GT},
+func invalidCharacter(pattern string) lexicalRule {
+	return lexicalRule{regexp.MustCompile(pattern), reportInvalidCharacter, 0}
+}
 
-	{regexp.MustCompile(`^\(`), token.LPAREN},
-	{regexp.MustCompile(`^\)`), token.RPAREN},
-	{regexp.MustCompile(`^\{`), token.LBRACE},
-	{regexp.MustCompile(`^\}`), token.RBRACE},
-	{regexp.MustCompile(`^;`), token.SEMI},
-	{regexp.MustCompile(`^,`), token.COMMA},
+var rules = []lexicalRule{
+	skip(`^[ \t\r\n]+`),
+	skip(`^//[^\n]*`),
+	startBlockComment(`^/\*`),
 
-	{regexp.MustCompile(`^!`), errChar},
-	{regexp.MustCompile(`^.`), errChar},
+	malformedNumber(`^[0-9]+\.[0-9]+[A-Za-z_][A-Za-z0-9_]*`),
+	emit(`^[0-9]+\.[0-9]+`, token.NUM),
+	malformedNumber(`^[0-9]+\.[A-Za-z_][A-Za-z0-9_]*`),
+	malformedNumber(`^[0-9]+\.`),
+	malformedNumber(`^[0-9]+[A-Za-z_][A-Za-z0-9_]*`),
+	emit(`^[0-9]+`, token.NUM),
+
+	emit(`^[A-Za-z_][A-Za-z0-9_]*`, token.ID),
+
+	emit(`^==`, token.EQ),
+	emit(`^!=`, token.NEQ),
+	emit(`^<=`, token.LTE),
+	emit(`^>=`, token.GTE),
+
+	emit(`^=`, token.ASSIGN),
+	emit(`^\+`, token.PLUS),
+	emit(`^-`, token.MINUS),
+	emit(`^\*`, token.MULT),
+	emit(`^/`, token.DIV),
+	emit(`^<`, token.LT),
+	emit(`^>`, token.GT),
+
+	emit(`^\(`, token.LPAREN),
+	emit(`^\)`, token.RPAREN),
+	emit(`^\{`, token.LBRACE),
+	emit(`^\}`, token.RBRACE),
+	emit(`^;`, token.SEMI),
+	emit(`^,`, token.COMMA),
+
+	invalidCharacter(`^!`),
+	invalidCharacter(`^.`),
 }
 
 type Lexer struct {
-	source string
-	pos    int
-	line   int
-	tokens []token.Token
-	errors []LexError
+	source       string
+	position     int
+	currentLine  int
+	tokens       []token.Token
+	errors       []LexicalError
 }
 
 func New(source string) *Lexer {
-	return &Lexer{source: source, line: 1}
+	return &Lexer{source: source, currentLine: 1}
 }
 
-func (l *Lexer) Scan() ([]token.Token, []LexError) {
-	for l.pos < len(l.source) {
-		remaining := l.source[l.pos:]
-
-		for _, r := range rules {
-			m := r.pattern.FindString(remaining)
-			if m == "" {
-				continue
-			}
-
-			startLine := l.line
-
-			switch r.code {
-			case skip:
-				l.line += strings.Count(m, "\n")
-				l.pos += len(m)
-
-			case blockComment:
-				l.pos += len(m)
-				l.handleBlockComment(startLine)
-
-			case errNumber:
-				l.errors = append(l.errors, LexError{fmt.Sprintf("Numero mal formado: '%s'", m), startLine})
-				l.pos += len(m)
-
-			case errChar:
-				l.errors = append(l.errors, LexError{fmt.Sprintf("Caractere invalido '%s'", m), startLine})
-				l.pos += len(m)
-
-			case token.ID:
-				l.pos += len(m)
-				if len(m) > 30 {
-					l.errors = append(l.errors, LexError{fmt.Sprintf("Identificador acima do tamanho maximo (30 caracteres): '%s'", m), startLine})
-				} else if kwCode, ok := token.Keywords[m]; ok {
-					l.tokens = append(l.tokens, token.Token{Code: kwCode, Lexeme: m, Line: startLine})
-				} else {
-					l.tokens = append(l.tokens, token.Token{Code: token.ID, Lexeme: m, Line: startLine})
-				}
-
-			default:
-				l.tokens = append(l.tokens, token.Token{Code: r.code, Lexeme: m, Line: startLine})
-				l.pos += len(m)
-			}
-
-			break
-		}
+func (l *Lexer) Scan() ([]token.Token, []LexicalError) {
+	for l.hasMoreInput() {
+		l.processNextMatch()
 	}
-
 	return l.tokens, l.errors
 }
 
-func (l *Lexer) handleBlockComment(startLine int) {
-	rest := l.source[l.pos:]
-	closeIdx := strings.Index(rest, "*/")
+func (l *Lexer) hasMoreInput() bool {
+	return l.position < len(l.source)
+}
 
-	if closeIdx == -1 {
-		l.line += strings.Count(rest, "\n")
-		l.pos = len(l.source)
-		l.errors = append(l.errors, LexError{"Comentario de bloco nao fechado", startLine})
-	} else {
-		content := rest[:closeIdx+2]
-		l.line += strings.Count(content, "\n")
-		l.pos += closeIdx + 2
+func (l *Lexer) processNextMatch() {
+	remaining := l.source[l.position:]
+
+	for _, rule := range rules {
+		match := rule.pattern.FindString(remaining)
+		if match == "" {
+			continue
+		}
+		l.applyAction(rule, match)
+		return
 	}
+}
+
+func (l *Lexer) applyAction(rule lexicalRule, match string) {
+	startLine := l.currentLine
+
+	switch rule.action {
+	case skipMatch:
+		l.advanceCountingNewlines(match)
+
+	case enterBlockComment:
+		l.position += len(match)
+		l.consumeBlockComment(startLine)
+
+	case reportMalformedNumber:
+		l.recordError(startLine, fmt.Sprintf("Numero mal formado: '%s'", match))
+		l.position += len(match)
+
+	case reportInvalidCharacter:
+		l.recordError(startLine, fmt.Sprintf("Caractere invalido '%s'", match))
+		l.position += len(match)
+
+	case emitToken:
+		l.position += len(match)
+		if rule.code == token.ID {
+			l.emitIdentifierOrKeyword(match, startLine)
+		} else {
+			l.addToken(rule.code, match, startLine)
+		}
+	}
+}
+
+func (l *Lexer) advanceCountingNewlines(text string) {
+	l.currentLine += strings.Count(text, "\n")
+	l.position += len(text)
+}
+
+func (l *Lexer) emitIdentifierOrKeyword(lexeme string, line int) {
+	if len(lexeme) > maxIdentifierLength {
+		l.recordError(line, fmt.Sprintf(
+			"Identificador acima do tamanho maximo (%d caracteres): '%s'",
+			maxIdentifierLength, lexeme))
+		return
+	}
+	if keywordCode, isKeyword := token.Keywords[lexeme]; isKeyword {
+		l.addToken(keywordCode, lexeme, line)
+		return
+	}
+	l.addToken(token.ID, lexeme, line)
+}
+
+func (l *Lexer) addToken(code int, lexeme string, line int) {
+	l.tokens = append(l.tokens, token.Token{Code: code, Lexeme: lexeme, Line: line})
+}
+
+func (l *Lexer) recordError(line int, message string) {
+	l.errors = append(l.errors, LexicalError{Line: line, Message: message})
+}
+
+func (l *Lexer) consumeBlockComment(startLine int) {
+	rest := l.source[l.position:]
+	closeIndex := strings.Index(rest, "*/")
+
+	if closeIndex == -1 {
+		l.advanceCountingNewlines(rest)
+		l.recordError(startLine, "Comentario de bloco nao fechado")
+		return
+	}
+
+	commentBody := rest[:closeIndex+2]
+	l.advanceCountingNewlines(commentBody)
 }

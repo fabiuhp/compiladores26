@@ -1,4 +1,6 @@
-/* Exemplo 1: Fatorial com funcoes, while, if/else e chamada de funcao */
+/* Exemplo 1: Fatorial
+   Demonstra funcoes, while, if/else, chamada de funcao
+   e tambem comentarios de linha e bloco */
 
 int fatorial(int n) {
     int resultado;
@@ -10,11 +12,12 @@ int fatorial(int n) {
     return resultado;
 }
 
+// Funcao principal do programa
 int main() {
     int x;
     int fat;
     x = 5;
-    fat = fatorial(x);
+    fat = fatorial(x);  // chama a funcao fatorial
     if (fat > 100)
         print(fat);
     else
