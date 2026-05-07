@@ -1,0 +1,13 @@
+// Exemplo 5: Programa com multiplos erros sintaticos
+// Demonstra recuperacao em modo panico
+
+int main() {
+    int x;
+    int y;
+    x = 10
+    y = 20;
+    print(x);
+    if (x > y
+        print(x);
+    return 0;
+}
